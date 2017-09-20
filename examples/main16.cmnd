@@ -5,7 +5,7 @@
 ! The changes here are illustrative, not always physics-motivated.
 
 ! 1) Settings that are used in the main program.
-Main:numberOfEvents = 1000         ! number of events to generate
+Main:numberOfEvents = 20         ! number of events to generate
 Main:timesAllowErrors = 10         ! abort run after this many flawed events
 
 ! 2) Settings related to output in init(), next() and stat().
@@ -14,18 +14,26 @@ Init:showChangedParticleData = on  ! list changed particle data
 #Init:showChangedResonanceData = on ! also print changed resonance data
 #Init:showOneParticleData = 25      ! print data for this particular particle
 Next:numberCount = 100             ! print message every n events
-Next:numberShowInfo = 1            ! print event information n times
-Next:numberShowProcess = 1         ! print process record n times
-Next:numberShowEvent = 0           ! print event record n times
-Stat:showPartonLevel = on          ! more statistics on MPI
+Next:numberShowInfo = 0            ! print event information n times
+Next:numberShowProcess = 0         ! print process record n times
+Next:numberShowEvent = 10           ! print event record n times
+Stat:showPartonLevel = off         ! more statistics on MPI
 
 ! 3) Beam settings.
-Beams:idA = 2212                   ! first beam, p = 2212, pbar = -2212
-Beams:idB = 2212                   ! second beam, p = 2212, pbar = -2212
-Beams:eCM = 14000.                 ! CM energy of collision, LHC
+Beams:idA = 11                     ! first beam, p = 2212, pbar = -2212
+Beams:idB = -11                   ! second beam, p = 2212, pbar = -2212
+Beams:eCM = 500.                 ! CM energy of collision, LHC
+WeakSingleBoson:ffbar2gmZ = on
+23:onMode = off
+23:onIfMatch = 4 -4
+PhaseSpace:mHatMin = 495.
+TimeShower:MEcorrections = false
+443:onMode = off
+441:onMode = off
+PDF:lepton = off
 
 ! 4) Settings for hard-process generation internal to Pythia8.
-HiggsSM:gg2H = on                  ! Higgs production by gluon-gluon fusion
+! HiggsSM:gg2H = on                  ! Higgs production by gluon-gluon fusion
 
 ! 5) Set Higgs mass, width and branching ratios by hand.
 ! Values for 125 GeV SM Higgs taken from
@@ -66,10 +74,10 @@ HiggsSM:gg2H = on                  ! Higgs production by gluon-gluon fusion
 ! 6) Switch off some key components of the simulation, for comparisons.
 #PartonLevel:all = off              ! stop after hard process
 #PartonLevel:MPI = off              ! no multiparton interactions
-#PartonLevel:ISR = off              ! no initial-state radiation
+PartonLevel:ISR = off              ! no initial-state radiation
 #PartonLevel:FSR = off              ! no final-state radiation
 #HadronLevel:all = off              ! stop after parton level
-#HadronLevel:Hadronize = off        ! no hadronization
+HadronLevel:Hadronize = off        ! no hadronization
 #HadronLevel:Decay = off            ! no decays
 
 ! 7) Any other changes you desire.
