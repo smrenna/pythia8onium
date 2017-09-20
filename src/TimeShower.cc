@@ -653,15 +653,17 @@ void TimeShower::prepare( int iSys, Event& event, bool limitPTmaxIn) {
       if (doQCD && isOctetOnium)
         doQCD = (rndmPtr->flat() < octetOniumFraction);
 
+      bool isOniumRad = (idRadAbs == 4);
+      
       // Find dipole end formed by colour index.
       int colTag = event[iRad].col();
       if (doQCD && colTag > 0) setupQCDdip( iSys, i,  colTag,  1, event,
-        isOctetOnium, limitPTmaxIn);
+        isOctetOnium, limitPTmaxIn, isOniumRad);
 
       // Find dipole end formed by anticolour index.
       int acolTag = event[iRad].acol();
       if (doQCD && acolTag > 0) setupQCDdip( iSys, i, acolTag, -1, event,
-        isOctetOnium, limitPTmaxIn);
+        isOctetOnium, limitPTmaxIn, isOniumRad);
 
       // Find "charge-dipole" and "photon-dipole" ends.
       int  chgType  = event[iRad].chargeType();
@@ -689,7 +691,7 @@ void TimeShower::prepare( int iSys, Event& event, bool limitPTmaxIn) {
                    || (idRadAbs > 4900010 && idRadAbs < 4900017)
                    || idRadAbs == 4900101;
       if (doHVshower && isHVrad) setupHVdip( iSys, i, event, limitPTmaxIn);
-
+      
     // End loop over system final state. Have now found the dipole ends.
     }
   }
@@ -1125,7 +1127,7 @@ void TimeShower::rescatterUpdate( int iSys, Event& event) {
 // Setup a dipole end for a QCD colour charge.
 
 void TimeShower::setupQCDdip( int iSys, int i, int colTag, int colSign,
-  Event& event, bool isOctetOnium, bool limitPTmaxIn) {
+  Event& event, bool isOctetOnium, bool limitPTmaxIn, bool addOnium) {
 
   // Initial values. Find if allowed to hook up beams.
   int iRad     = partonSystemsPtr->getOut(iSys, i);
@@ -1377,6 +1379,11 @@ void TimeShower::setupQCDdip( int iSys, int i, int colTag, int colSign,
       int systemRec = partonSystemsPtr->getSystemOf(iRec, true);
       if (systemRec >= 0) dipEnd.back().systemRec = systemRec;
       dipEnd.back().MEtype = 0;
+    }
+    if (addOnium) {
+      dipEnd.push_back( TimeDipoleEnd( iRad, iRec, pTmax ));
+      dipEnd.back().MEtype = 0;
+      dipEnd.back().oniumType = 1;
     }
 
     // PS dec 2010
@@ -1820,7 +1827,7 @@ void TimeShower::setupWeakdipExternal(Event& event, bool limitPTmaxIn) {
 
 }
 
-//--------------------------------------------------------------------------
+  //--------------------------------------------------------------------------
 
 // Setup a dipole end for a Hidden Valley colour charge.
 
@@ -2017,6 +2024,8 @@ double TimeShower::pTnext( Event& event, double pTbegAll, double pTendAll,
         pT2nextWeak(pT2begDip, pT2sel, dip, event);
       else if (dip.colvType != 0)
         pT2nextHV(pT2begDip, pT2sel, dip, event);
+      else if (dip.oniumType !=0)
+	pT2nextOnium(pT2begDip, pT2sel, dip, event);
 
       // Update if found larger pT than current maximum.
       if (dip.pT2 > pT2sel) {
@@ -2038,7 +2047,6 @@ double TimeShower::pTnext( Event& event, double pTbegAll, double pTendAll,
 }
 
 //--------------------------------------------------------------------------
-
 // Evolve a QCD dipole end.
 
 void TimeShower::pT2nextQCD(double pT2begDip, double pT2sel,
@@ -2150,7 +2158,7 @@ void TimeShower::pT2nextQCD(double pT2begDip, double pT2sel,
           emitCoefQqbar *= userHooksPtr->enhanceFactor("fsr:G2QQ");
         emitCoefTot  += emitCoefQqbar;
       }
-
+      
       // Initialization done for current range.
       mustFindRange = false;
     }
@@ -2213,7 +2221,6 @@ void TimeShower::pT2nextQCD(double pT2begDip, double pT2sel,
           dip.mFlavour = particleDataPtr->m0(dip.flavour);
         }
 
-
         if (dip.flavour == 21
           && (colTypeAbs == 1 || colTypeAbs == 3) ) {
           nameNow = "fsr:Q2QG";
@@ -2247,7 +2254,6 @@ void TimeShower::pT2nextQCD(double pT2begDip, double pT2sel,
           }
         }
 
-        // No z weight, except threshold, if to do ME corrections later on.
         if (dip.MEtype > 0) {
           wt = 1.;
           if (dip.flavour < 10 && dip.m2 < THRESHM2 * pow2(dip.mFlavour))
@@ -2267,8 +2273,7 @@ void TimeShower::pT2nextQCD(double pT2begDip, double pT2sel,
             double x2G =  1. + r2G - dip.m2 / dip.m2Dip;
             wt *= 1. - (r2G / max(XMARGIN, x1G + x2G - 1. - r2G))
               * (max(XMARGIN, 1. + r2G - x2G) / max(XMARGIN,1. - r2G - x1G));
-          }
-
+          }	  	  
         // z weight for g -> q qbar: different options.
         } else {
           double ratioQ = pow2(dip.mFlavour) / dip.m2;
@@ -2359,6 +2364,302 @@ void TimeShower::pT2nextQCD(double pT2begDip, double pT2sel,
 
 //--------------------------------------------------------------------------
 
+// Evolve a QCD/Onium dipole end.
+
+void TimeShower::pT2nextOnium(double pT2begDip, double pT2sel,
+  TimeDipoleEnd& dip, Event& event) {
+
+  // Lower cut for evolution. Return if no evolution range.
+  double pT2endDip = max( pT2sel, pT2colCut );
+  if (pT2begDip < pT2endDip) return;
+
+  // For dipole recoil: no emission if the radiator is a quark,
+  // since then a unified description is in SpaceShower.
+  int    colTypeAbs = 1;
+  if (doDipoleRecoil && dip.isrType != 0 && colTypeAbs == 1) return;
+
+  // Variables used inside evolution loop. (Mainly dummy start values.)
+  dip.pT2              = pT2begDip;
+  int    nFlavour      = 3;
+  double zMinAbs       = 0.5;
+  double pT2min        = pT2endDip;
+  double b0            = 4.5;
+  double Lambda2       = Lambda3flav2;
+  double emitCoefGlue  = 0.;
+  double emitCoefQqbar = 0.;
+  double emitCoefTot   = 0.;
+  double wt            = 0.;
+  bool   mustFindRange = true;
+
+  double overFac       = 1.0;
+
+  // Set default values for enhanced emissions.
+  bool isEnhancedQ2QG, isEnhancedG2QQ, isEnhancedG2GG;
+  isEnhancedQ2QG = isEnhancedG2QQ = isEnhancedG2GG = false;
+  double enhanceNow = 1.;
+  string nameNow = "";
+
+  // Some new variables to handle onium production
+  double emitCoef_QQ_3S11 = 0.;
+  double emitCoef_QQ_1S01 = 0.;
+  double emitCoef_gg_3S11 = 0.;
+  double emitCoef_gg_1S01 = 0.;
+  double alphaS0 = 2.0*M_PI/b0/log(9.0*m2c/Lambda4flav2);
+  double t0 = 8.0*m2c;
+  double R02 = 0.512*10000.;
+  double mPsi = particleDataPtr->m0(443);
+  double overFac1 = 8.0*R02/(27.0*mc*M_PI*t0);
+  //
+  
+  // Begin evolution loop towards smaller pT values.
+  do {
+
+    // Default values for current tentative emission.
+    isEnhancedQ2QG = isEnhancedG2QQ = isEnhancedG2GG = false;
+    enhanceNow = 1.;
+    nameNow = "";
+
+    // Initialize evolution coefficients at the beginning and
+    // reinitialize when crossing c and b flavour thresholds.
+    if (mustFindRange) {
+
+      // Determine overestimated z range; switch at c and b masses.
+      if (dip.pT2 > m2b) {
+        nFlavour = 5;
+        pT2min   = max( m2b, pT2endDip);
+        b0       = 23./6.;
+        Lambda2  = Lambda5flav2;
+      } else if (dip.pT2 > m2c) {
+        nFlavour = 4;
+        pT2min   = max( m2c, pT2endDip);
+        b0       = 25./6.;
+        Lambda2  = Lambda4flav2;
+      } else {
+        nFlavour = 3;
+        pT2min   = pT2endDip;
+        b0       = 27./6.;
+        Lambda2  = Lambda3flav2;
+      }
+      // A change of renormalization scale expressed by a change of Lambda.
+      Lambda2 /= renormMultFac;
+
+      // Calculate allowed z range; fail if it is too tiny.
+      zMinAbs = 0.5 - sqrtpos( 0.25 - pT2min / dip.m2DipCorr );
+      if (zMinAbs < SIMPLIFYROOT) zMinAbs = pT2min / dip.m2DipCorr;
+      if (zMinAbs > 0.499) { dip.pT2 = 0.; return; }
+
+      emitCoef_QQ_3S11 = 0.0;
+      if(colTypeAbs == 1 && event[dip.iRadiator].idAbs() == 4) {
+	// Find emission coefficient for color singlet Q -> Q 3S_1 (1)
+        emitCoef_QQ_3S11 = overFac1  * 2.0 * alphaS0 * 0.5 / M_PI;
+	if (canEnhanceET && colTypeAbs == 1)
+	  emitCoef_QQ_3S11 *= userHooksPtr->enhanceFactor("fsr:Q2QG");
+      }
+      emitCoefTot = emitCoef_QQ_3S11;
+
+      emitCoef_QQ_1S01 = 0.0;
+      if(colTypeAbs == 1 && event[dip.iRadiator].idAbs() == 4) {
+	// Find emission coefficient for color singlet Q -> Q 3S_1 (1)
+        emitCoef_QQ_1S01 = overFac1  * 2.0 * alphaS0 * 0.5 / M_PI;
+	if (canEnhanceET && colTypeAbs == 1)
+	  emitCoef_QQ_1S01 *= userHooksPtr->enhanceFactor("fsr:Q2QG");
+      }
+      emitCoefTot += emitCoef_QQ_3S11;            
+
+      // For dipole recoil: no g -> g g branching, since in SpaceShower.
+      if (doDipoleRecoil && dip.isrType != 0 && colTypeAbs == 2)
+        emitCoefGlue = 0.;
+      
+      // Initialization done for current range.
+      mustFindRange = false;
+    }
+
+    // Pick pT2 (in overestimated z range) for fixed alpha_strong.
+    if (alphaSorder == 0) {
+      dip.pT2 = dip.pT2 * pow( rndmPtr->flat(),
+        1. / (alphaS2pi * emitCoefTot) );
+
+    // Ditto for first-order alpha_strong.
+    } else if (alphaSorder == 1) {
+      dip.pT2 = Lambda2 * pow( dip.pT2 / Lambda2,
+        pow( rndmPtr->flat(), b0 / emitCoefTot) );
+
+      // For second order reject by second term in alpha_strong expression.
+    } else {
+      do dip.pT2 = Lambda2 * pow( dip.pT2 / Lambda2,
+        pow( rndmPtr->flat(), b0 / emitCoefTot) );
+      while (alphaS.alphaS2OrdCorr(renormMultFac * dip.pT2) < rndmPtr->flat()
+        && dip.pT2 > pT2min);
+    }
+    wt = 0.;
+
+    // If crossed c or b thresholds: continue evolution from threshold.
+    if (nFlavour == 5 && dip.pT2 < m2b) {
+      mustFindRange = true;
+      dip.pT2       = m2b;
+    } else if ( nFlavour == 4 && dip.pT2 < m2c) {
+      mustFindRange = true;
+      dip.pT2       = m2c;
+
+    // Abort evolution if below cutoff scale, or below another branching.
+    } else {
+      if ( dip.pT2 < pT2endDip) { dip.pT2 = 0.; return; }
+
+      // Pick kind of branching: X -> X g or g -> q qbar.
+      dip.flavour  = 0;
+      dip.mFlavour = 0.;
+
+      double randSelect = rndmPtr->flat()*emitCoefTot;
+      
+      if (colTypeAbs == 1 && event[dip.iRadiator].idAbs()==4) {
+	if(emitCoef_QQ_3S11 > randSelect) {
+	  dip.flavour = 443;
+	} else if (emitCoef_QQ_3S11+emitCoef_QQ_1S01 > randSelect) {
+	  dip.flavour = 441;
+	}
+	dip.mFlavour = particleDataPtr->m0(dip.flavour);	
+      }
+
+      dip.z = zMinAbs + (1. - 2. * zMinAbs) * rndmPtr->flat();
+
+      // Do not accept branching if outside allowed z range.
+      double zMin = 0.5 - sqrtpos( 0.25 - dip.pT2 / dip.m2DipCorr );
+      if (zMin < SIMPLIFYROOT) zMin = dip.pT2 / dip.m2DipCorr;
+      dip.m2 = dip.m2Rad + dip.pT2 / (dip.z * (1. - dip.z));
+      if (dip.z > zMin && dip.z < 1. - zMin
+        && dip.m2 * dip.m2Dip < dip.z * (1. - dip.z)
+        * pow2(dip.m2Dip + dip.m2 - dip.m2Rec) ) {
+
+
+        if (dip.flavour > 0 && colTypeAbs == 1) {
+          nameNow = "fsr:Q2QG";
+          // Optionally enhanced branching rate.
+          if (canEnhanceET) {
+            double enhance = userHooksPtr->enhanceFactor(nameNow);
+            if (enhance != 1.) {
+              enhanceNow = enhance;
+              isEnhancedQ2QG = true;
+            }
+          }
+        } else if (dip.flavour == 21) {
+          nameNow = "fsr:G2GG";
+          // Optionally enhanced branching rate.
+          if (canEnhanceET) {
+            double enhance = userHooksPtr->enhanceFactor(nameNow);
+            if (enhance != 1.) {
+              enhanceNow = enhance;
+              isEnhancedG2GG = true;
+            }
+          }
+        } else {
+          nameNow = "fsr:G2QQ";
+          // Optionally enhanced branching rate.
+          if (canEnhanceET) {
+            double enhance = userHooksPtr->enhanceFactor(nameNow);
+            if (enhance != 1.) {
+              enhanceNow = enhance;
+              isEnhancedG2QQ = true;
+            }
+          }
+        }
+
+        // No z weight, except threshold, if to do ME corrections later on
+	if (dip.flavour == 443) {
+
+	  double tn = t0/dip.pT2*dip.z*(1.0-dip.z);
+	  wt = (tn < 1.0 ) ? tn * (4.0 + 5.0*pow2(dip.z)-9.0*pow3(dip.z))/pow2(2.0-dip.z) +
+	    pow2(tn)*(pow2(dip.z)+6.0*dip.z-4.0)/(2.0-dip.z) - 0.75*pow3(tn) : 0.0;
+
+	  wt /= 2.0;
+
+	  wt *= 2.0*M_PI/b0*log(dip.pT2 / Lambda2)/alphaS0*
+	    pow2(log( (dip.pT2 + pow2(dip.mFlavour)) / Lambda2));
+
+	  wt *= pow3(2.0*mc/dip.mFlavour);
+	
+        } else if (dip.flavour == 441) {
+
+	  double tn = t0/dip.pT2*dip.z*(1.0-dip.z);
+	  wt = (tn < 1.0 ) ? tn * (1.0 - dip.z)*pow2((2.0+dip.z)/(2.0-dip.z)) +
+	    pow2(tn)*2.0*dip.z/(2.0-dip.z) - 0.25*pow3(tn) : 0.0;
+
+	  wt /= 2.0;
+
+	  wt *= 2.0*M_PI/b0*log(dip.pT2 / Lambda2)/alphaS0*
+	    pow2(log( (dip.pT2 + pow2(dip.mFlavour)) / Lambda2));
+
+	  wt *= pow3(2.0*mc/dip.mFlavour);	  
+	  
+	}
+
+        // Cancel out extra uncertainty-band headroom factors.
+        wt /= overFac;
+
+        // Suppression factors for dipole to beam remnant.
+        if (dip.isrType != 0 && useLocalRecoilNow) {
+          BeamParticle& beam = (dip.isrType == 1) ? *beamAPtr : *beamBPtr;
+          int iSysRec = dip.systemRec;
+          double xOld = beam[iSysRec].x();
+          double xNew = xOld * (1. + (dip.m2 - dip.m2Rad) /
+            (dip.m2Dip - dip.m2Rad));
+          double xMaxAbs = beam.xMax(iSysRec);
+          if (xMaxAbs < 0.) {
+            infoPtr->errorMsg("Warning in TimeShower::pT2nextQCD: "
+            "xMaxAbs negative");
+            return;
+          }
+
+          // New: Ensure that no x-value larger than unity is picked. Only
+          // necessary for imprecise LHE input.
+          if (xNew > 1.) wt = 0.;
+
+          // Firstly reduce by PDF ratio.
+          if (xNew > xMaxAbs) wt = 0.;
+          else {
+            int idRec     = event[dip.iRecoiler].id();
+            pdfScale2 = (useFixedFacScale) ? fixedFacScale2
+              : factorMultFac * dip.pT2;
+            double pdfOld = max ( TINYPDF,
+              beam.xfISR( iSysRec, idRec, xOld, pdfScale2) );
+            double pdfNew =
+              beam.xfISR( iSysRec, idRec, xNew, pdfScale2);
+            wt *= min( 1., pdfNew / pdfOld);
+          }
+
+          // Secondly optionally reduce by 4 pT2_hard / (4 pT2_hard + m2).
+          if (dampenBeamRecoil) {
+            double pTpT = sqrt(event[dip.iRadiator].pT2() * dip.pT2);
+            wt *= pTpT / (pTpT + dip.m2);
+          }
+        }
+
+        // Optional dampening of large pT values in hard system.
+        if (dopTdamp && dip.system == 0 && dip.MEtype == 0)
+          wt *= pT2damp / (dip.pT2 + pT2damp);
+      }
+    }
+
+    // If doing uncertainty variations, postpone accept/reject to branch().
+    if (wt > 0. && dip.pT2 > pT2min && doUncertaintiesNow) {
+      dip.pAccept = wt;
+      wt          = 1.0;
+    }
+
+  // Iterate until acceptable pT (or have fallen below pTmin).
+  } while (wt < rndmPtr->flat());
+
+  // Store outcome of enhanced branching rate analysis.
+  splittingNameNow = nameNow;
+  if (canEnhanceET) {
+    if (isEnhancedQ2QG) storeEnhanceFactor(dip.pT2,"fsr:Q2QG", enhanceNow);
+    if (isEnhancedG2QQ) storeEnhanceFactor(dip.pT2,"fsr:G2QQ", enhanceNow);
+    if (isEnhancedG2GG) storeEnhanceFactor(dip.pT2,"fsr:G2GG", enhanceNow);
+  }
+
+}
+
+//--------------------------------------------------------------------------
+  
 // Evolve a QED dipole end, either charged or photon.
 
 void TimeShower::pT2nextQED(double pT2begDip, double pT2sel,
@@ -3019,7 +3320,7 @@ bool TimeShower::branch( Event& event, bool isInterleaved) {
   int iSysSelRec   = dipSel->systemRec;
 
   // Default OK for photon, photon_HV or gluon_HV emission.
-  if (dipSel->flavour == 22 || dipSel->flavour == idHV) {
+  if (dipSel->flavour == 22 || dipSel->flavour == idHV || dipSel->oniumType == 1) {
   // New colour tag required for gluon emission.
   } else if (dipSel->flavour == 21 && dipSel->colType > 0) {
     colEmt  = colRad;
@@ -3084,7 +3385,7 @@ bool TimeShower::branch( Event& event, bool isInterleaved) {
   // Kinematics reduction for f -> f W/Z when m_f > 0 (and m_W/Z > 0)
   // or q -> q gamma_v when m_q > 0 and m_gamma_v > 0.
   if ( dipSel->weakType != 0
-    || (abs(dipSel->colvType) == 1 && dipSel->mFlavour > 0.) ) {
+    || (abs(dipSel->colvType) == 1 && dipSel->mFlavour > 0.) || dipSel->oniumType != 0) {
     mEmt              = dipSel->mFlavour;
     if (pow2(mRad + mEmt) > dipSel->m2) return false;
     double m2Emt      = pow2(mEmt);
@@ -3497,8 +3798,19 @@ bool TimeShower::branch( Event& event, bool isInterleaved) {
     double flexFactor  = (isFlexible) ? dipSel->flexFactor : 1.0;
     dipSel->isFlexible = false;
     for (int i = 0; i < int(dipEnd.size()); ++i) {
-      if (dipEnd[i].iRadiator == iRecBef && dipEnd[i].iRecoiler == iRadBef
-        && dipEnd[i].colType != 0) {
+      // Adjust dipole with same radiator and recoiler in the case of onium production
+      if (dipEnd[i].iRadiator == iRadBef && dipEnd[i].iRecoiler == iRecBef
+	  && dipEnd[i].oniumType != 0) {
+        dipEnd[i].iRadiator = iRad;
+        dipEnd[i].iRecoiler = iEmt;
+	dipEnd[i].pTmax = pTsel;
+      }	else if (dipEnd[i].iRadiator == iRecBef && dipEnd[i].iRecoiler == iRadBef
+	  && dipEnd[i].oniumType != 0) {
+        dipEnd[i].iRadiator = iRec;
+        dipEnd[i].iRecoiler = iEmt;
+        dipEnd[i].pTmax = pTsel;	
+      }	else if (dipEnd[i].iRadiator == iRecBef && dipEnd[i].iRecoiler == iRadBef
+	  && dipEnd[i].colType != 0) {
         dipEnd[i].iRadiator = iRec;
         dipEnd[i].iRecoiler = iEmt;
         // Optionally also kill ME corrections after first emission.
@@ -3538,6 +3850,13 @@ bool TimeShower::branch( Event& event, bool isInterleaved) {
     dipEnd.push_back( TimeDipoleEnd(iEmt, iRad, pTsel,
       -colType, 0, 0, 0, 0, iSysSel, 0));
 
+
+    // Photon_HV emission: update to new dipole ends.
+  } else if (dipSel->oniumType == 1) {
+    dipSel->iRadiator = iRad;
+    dipSel->iRecoiler = iRec;
+    dipSel->pTmax = pTsel;
+    
   // Gluon branching to q qbar: update current dipole and other of gluon.
   } else if (dipSel->colType != 0) {
     for (int i = 0; i < int(dipEnd.size()); ++i) {
